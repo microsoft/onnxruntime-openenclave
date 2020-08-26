@@ -359,6 +359,9 @@ def parse_arguments():
     parser.add_argument(
         "--build_micro_benchmarks", action='store_true',
         help="Build ONNXRuntime micro-benchmarks.")
+    parser.add_argument(
+        "--use_openenclave", action='store_true',
+        help="Build with Open Enclave support.")
     return parser.parse_args()
 
 
@@ -543,7 +546,8 @@ def setup_test_data(build_dir, configs):
 
 def generate_build_tree(cmake_path, source_dir, build_dir, cuda_home, cudnn_home,
                         mpi_home, nccl_home, tensorrt_home, migraphx_home,
-                        path_to_protoc_exe, configs, cmake_extra_defines, args, cmake_extra_args):
+                        path_to_protoc_exe, configs, cmake_extra_defines, args, cmake_extra_args,
+                        oe_phase, oe_enclave_build_dir):
     log.info("Generating CMake build tree")
     cmake_dir = os.path.join(source_dir, "cmake")
     # TODO: fix jemalloc build so it does not conflict with onnxruntime
@@ -664,7 +668,12 @@ def generate_build_tree(cmake_path, source_dir, build_dir, cuda_home, cudnn_home
         "-Donnxruntime_USE_HOROVOD=" + (
             "ON" if args.use_horovod else "OFF"),
         "-Donnxruntime_BUILD_BENCHMARKS=" + (
-            "ON" if args.build_micro_benchmarks else "OFF")
+            "ON" if args.build_micro_benchmarks else "OFF"),
+        # Open Enclave flags
+        "-Donnxruntime_USE_OPENENCLAVE=" + (
+            "ON" if args.use_openenclave else "OFF"),
+        "-Donnxruntime_OPENENCLAVE_PHASE=" + (
+            oe_phase if oe_phase else ""),
     ]
 
     if mpi_home and os.path.exists(mpi_home):
@@ -872,13 +881,16 @@ def generate_build_tree(cmake_path, source_dir, build_dir, cuda_home, cudnn_home
                 config_build_dir, "external", "tvm",
                 config) + os.pathsep + os.environ["PATH"]
 
+        enclave_config_build_dir = get_config_build_dir(oe_enclave_build_dir, config) if oe_enclave_build_dir else ""
         run_subprocess(
             cmake_args + [
                 "-Donnxruntime_ENABLE_MEMLEAK_CHECKER=" +
                 ("ON" if config.lower() == 'debug' and not args.use_tvm and not
                  args.use_ngraph and not args.use_openvino and not
                  args.enable_msvc_static_runtime
-                 else "OFF"), "-DCMAKE_BUILD_TYPE={}".format(config)],
+                 else "OFF"),
+                 "-Donnxruntime_OPENENCLAVE_ENCLAVE_BUILD_DIR=" + os.path.abspath(enclave_config_build_dir),
+                 "-DCMAKE_BUILD_TYPE={}".format(config)],
             cwd=config_build_dir)
 
 
@@ -892,7 +904,6 @@ def clean_targets(cmake_path, build_dir, configs):
                     "--target", "clean"]
 
         run_subprocess(cmd_args)
-
 
 def build_targets(args, cmake_path, build_dir, configs, parallel):
     for config in configs:
@@ -1681,6 +1692,37 @@ def main():
     if args.skip_tests:
         args.test = False
 
+    if not args.use_openenclave:
+        _main(args)
+    else:
+        build_dir = args.build_dir
+        host_build_dir = os.path.join(build_dir)
+        enclave_build_dir = os.path.join(build_dir, 'enclave')
+
+        # Delay running host tests as they depend on enclaves from enclave phase.
+        # Need to build host first as enclave phase relies on protoc.
+        test = args.test
+        args.test = False
+        args.build_dir = host_build_dir
+        _main(args, oe_phase='host', oe_enclave_build_dir=enclave_build_dir)
+
+        if not args.path_to_protoc_exe:
+            args.path_to_protoc_exe = os.path.abspath(os.path.join(
+                host_build_dir, args.config[0], 'external', 'protobuf', 'cmake', 'protoc'))
+        args.build_dir = enclave_build_dir
+        _main(args, oe_phase='enclave')
+
+        if test:
+            args.build_dir = host_build_dir
+            args.clean = False
+            args.build = False
+            args.update = False
+            args.test = True
+            _main(args, oe_phase='host')
+
+def _main(args, oe_phase=None, oe_enclave_build_dir=None):
+    cmake_extra_defines = args.cmake_extra_defines if args.cmake_extra_defines else []
+
     if args.use_tensorrt:
         args.use_cuda = True
 
@@ -1802,7 +1844,7 @@ def main():
         generate_build_tree(
             cmake_path, source_dir, build_dir, cuda_home, cudnn_home, mpi_home, nccl_home,
             tensorrt_home, migraphx_home, path_to_protoc_exe, configs, cmake_extra_defines,
-            args, cmake_extra_args)
+            args, cmake_extra_args, oe_phase, oe_enclave_build_dir)
 
     if args.clean:
         clean_targets(cmake_path, build_dir, configs)
