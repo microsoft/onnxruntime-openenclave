@@ -52,5 +52,5 @@ The execution providers are preferred in the order they were enabled.
 
 ## API Reference
 
-The Javadoc is available [here](https://microsoft.github.io/onnxruntime/java/index.html).
+The Javadoc is available [here](https://microsoft.github.io/onnxruntime/docs/api/java/index.html).
 
