@@ -29,7 +29,26 @@ class TestNuphar(unittest.TestCase):
         if not os.path.exists(bidaf_local):
             urllib.request.urlretrieve(bidaf_url, bidaf_local)
         with tarfile.open(bidaf_local, 'r') as f:
-            f.extractall(cwd)
+            def is_within_directory(directory, target):
+                
+                abs_directory = os.path.abspath(directory)
+                abs_target = os.path.abspath(target)
+            
+                prefix = os.path.commonprefix([abs_directory, abs_target])
+                
+                return prefix == abs_directory
+            
+            def safe_extract(tar, path=".", members=None, *, numeric_owner=False):
+            
+                for member in tar.getmembers():
+                    member_path = os.path.join(path, member.name)
+                    if not is_within_directory(path, member_path):
+                        raise Exception("Attempted Path Traversal in Tar File")
+            
+                tar.extractall(path, members, numeric_owner=numeric_owner) 
+                
+            
+            safe_extract(f, cwd)
 
         # verify accuracy of quantized model
         bidaf_dir = os.path.join(cwd, 'bidaf')
@@ -115,7 +134,26 @@ class TestNuphar(unittest.TestCase):
         if not os.path.exists(bert_squad_local):
             urllib.request.urlretrieve(bert_squad_url, bert_squad_local)
         with tarfile.open(bert_squad_local, 'r') as f:
-            f.extractall(cwd)
+            def is_within_directory(directory, target):
+                
+                abs_directory = os.path.abspath(directory)
+                abs_target = os.path.abspath(target)
+            
+                prefix = os.path.commonprefix([abs_directory, abs_target])
+                
+                return prefix == abs_directory
+            
+            def safe_extract(tar, path=".", members=None, *, numeric_owner=False):
+            
+                for member in tar.getmembers():
+                    member_path = os.path.join(path, member.name)
+                    if not is_within_directory(path, member_path):
+                        raise Exception("Attempted Path Traversal in Tar File")
+            
+                tar.extractall(path, members, numeric_owner=numeric_owner) 
+                
+            
+            safe_extract(f, cwd)
 
         # run symbolic shape inference on this model
         # set int_max to 1,000,000 to simplify symbol computes for things like min(1000000, seq_len) -> seq_len
